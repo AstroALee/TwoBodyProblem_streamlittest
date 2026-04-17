@@ -390,6 +390,9 @@ if st.button("Determine Trajectory"):
         st.markdown(f"**Semi-major axis:** {a_m / 1000.0:,.0f} km")
         st.markdown(f"**Eccentricity:** {e:.4f}")
 
+        period = 2.0 * np.pi * np.sqrt(a_m**3 / (G * M_EARTH))
+        st.markdown(f"**Orbital period:** {period / (24.0 * 3600.0):.2f} days")
+
     st.markdown(f"**Minimum distance from Earth's center:** {np.min(r_m) / 1000.0:,.0f} km")
     st.markdown(f"**Maximum distance from Earth's center:** {np.max(r_m) / 1000.0:,.0f} km")
     st.markdown(f"**Final distance from Earth's center:** {r_m[-1] / 1000.0:,.0f} km")
