@@ -62,11 +62,40 @@ def earth_trace() -> go.Scatter:
     )
 
 
+def compute_plot_limits(
+    x_km: np.ndarray,
+    y_km: np.ndarray,
+    earth_radius_km: float,
+    padding_fraction: float = 0.08,
+) -> tuple[tuple[float, float], tuple[float, float]]:
+    """
+    Compute fixed plot limits that contain the full orbit and Earth,
+    with equal scaling in x and y.
+    """
+    x_min = min(float(np.min(x_km)), -earth_radius_km)
+    x_max = max(float(np.max(x_km)), earth_radius_km)
+    y_min = min(float(np.min(y_km)), -earth_radius_km)
+    y_max = max(float(np.max(y_km)), earth_radius_km)
+
+    x_center = 0.5 * (x_min + x_max)
+    y_center = 0.5 * (y_min + y_max)
+
+    half_span = 0.5 * max(x_max - x_min, y_max - y_min)
+    half_span *= (1.0 + padding_fraction)
+
+    return (
+        (x_center - half_span, x_center + half_span),
+        (y_center - half_span, y_center + half_span),
+    )
+
+
 def make_orbit_figure(
     x_km: np.ndarray,
     y_km: np.ndarray,
     moon_index: int | None = None,
     title: str = "Orbit Trajectory",
+    x_range: tuple[float, float] | None = None,
+    y_range: tuple[float, float] | None = None,
 ) -> go.Figure:
     fig = go.Figure()
 
@@ -96,10 +125,16 @@ def make_orbit_figure(
         title=title,
         xaxis_title="x (km)",
         yaxis_title="y (km)",
-        yaxis_scaleanchor="x",
         showlegend=True,
         margin={"l": 20, "r": 20, "t": 50, "b": 20},
     )
+
+    fig.update_yaxes(scaleanchor="x", scaleratio=1)
+
+    if x_range is not None:
+        fig.update_xaxes(range=list(x_range))
+    if y_range is not None:
+        fig.update_yaxes(range=list(y_range))
 
     return fig
 
@@ -165,20 +200,30 @@ frame_delay = st.sidebar.slider(
 # Convert units
 r0_m = r0_km * 1000.0
 t_max_s = t_days * 24.0 * 3600.0
+earth_radius_km = R_EARTH / 1000.0
 
 # Preview initial configuration
 st.subheader("Initial setup")
+preview_xlim, preview_ylim = compute_plot_limits(
+    np.array([r0_km]),
+    np.array([0.0]),
+    earth_radius_km=earth_radius_km,
+    padding_fraction=0.2,
+)
 preview_fig = make_orbit_figure(
     x_km=np.array([r0_km]),
     y_km=np.array([0.0]),
     moon_index=0,
     title="Initial Position",
+    x_range=preview_xlim,
+    y_range=preview_ylim,
 )
 st.plotly_chart(preview_fig, use_container_width=True)
 
 simulate_button = st.button("Simulate")
 
 if simulate_button:
+    # Compute the entire trajectory first
     t, x, y = simulate_orbit(
         r0=r0_m,
         v0=float(v0),
@@ -189,6 +234,14 @@ if simulate_button:
     x_km = x / 1000.0
     y_km = y / 1000.0
     r_km = np.sqrt(x_km**2 + y_km**2)
+
+    # Fixed limits for the full animation
+    xlim, ylim = compute_plot_limits(
+        x_km,
+        y_km,
+        earth_radius_km=earth_radius_km,
+        padding_fraction=0.08,
+    )
 
     animation_placeholder = st.empty()
     status_placeholder = st.empty()
@@ -201,6 +254,8 @@ if simulate_button:
             y_km=y_km[: i + 1],
             moon_index=i,
             title="Animated Orbit",
+            x_range=xlim,
+            y_range=ylim,
         )
 
         animation_placeholder.plotly_chart(
@@ -214,12 +269,13 @@ if simulate_button:
 
         time.sleep(frame_delay)
 
-    # Ensure final frame is shown
     final_anim_fig = make_orbit_figure(
         x_km=x_km,
         y_km=y_km,
         moon_index=len(x_km) - 1,
         title="Animated Orbit",
+        x_range=xlim,
+        y_range=ylim,
     )
     animation_placeholder.plotly_chart(
         final_anim_fig,
@@ -233,6 +289,8 @@ if simulate_button:
         y_km=y_km,
         moon_index=None,
         title="Orbit Trajectory",
+        x_range=xlim,
+        y_range=ylim,
     )
     st.plotly_chart(full_fig, use_container_width=True)
 
