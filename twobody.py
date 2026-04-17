@@ -1,16 +1,15 @@
 from __future__ import annotations
 
-import time
-
 import numpy as np
 import plotly.graph_objects as go
 import streamlit as st
 from scipy.integrate import solve_ivp
 
 # --- Constants ---
-G: float = 6.67430e-11          # m^3 kg^-1 s^-2
-M_EARTH: float = 5.972e24       # kg
-R_EARTH: float = 6.371e6        # m
+G: float = 6.67430e-11
+M_EARTH: float = 5.972e24
+R_EARTH: float = 6.371e6
+
 
 # --- Physics ---
 def two_body(t: float, state: np.ndarray) -> np.ndarray:
@@ -27,13 +26,6 @@ def simulate_orbit(
     t_max: float,
     n_steps: int,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """
-    Simulate the orbit of a test particle around Earth.
-
-    Initial conditions:
-    - position starts on +x axis
-    - velocity is purely tangential in +y direction
-    """
     initial_state = np.array([r0, 0.0, 0.0, v0], dtype=float)
     t_eval = np.linspace(0.0, t_max, n_steps)
 
@@ -68,73 +60,154 @@ def compute_plot_limits(
     earth_radius_km: float,
     padding_fraction: float = 0.08,
 ) -> tuple[tuple[float, float], tuple[float, float]]:
-    """
-    Compute fixed plot limits that contain the full orbit and Earth,
-    with equal scaling in x and y.
-    """
     x_min = min(float(np.min(x_km)), -earth_radius_km)
     x_max = max(float(np.max(x_km)), earth_radius_km)
     y_min = min(float(np.min(y_km)), -earth_radius_km)
     y_max = max(float(np.max(y_km)), earth_radius_km)
 
-    x_center = 0.5 * (x_min + x_max)
-    y_center = 0.5 * (y_min + y_max)
-
     half_span = 0.5 * max(x_max - x_min, y_max - y_min)
-    half_span *= (1.0 + padding_fraction)
+    half_span *= 1.0 + padding_fraction
 
-    return (
-        (x_center - half_span, x_center + half_span),
-        (y_center - half_span, y_center + half_span),
-    )
+    # Center on Earth for a more intuitive view
+    return (-half_span, half_span), (-half_span, half_span)
 
 
-def make_orbit_figure(
+def make_animation_figure(
     x_km: np.ndarray,
     y_km: np.ndarray,
-    moon_index: int | None = None,
-    title: str = "Orbit Trajectory",
-    x_range: tuple[float, float] | None = None,
-    y_range: tuple[float, float] | None = None,
+    t_days: np.ndarray,
+    frame_stride: int,
+    frame_duration_ms: int,
 ) -> go.Figure:
-    fig = go.Figure()
+    earth_radius_km = R_EARTH / 1000.0
+    x_range, y_range = compute_plot_limits(x_km, y_km, earth_radius_km)
 
-    fig.add_trace(earth_trace())
-
-    fig.add_trace(
-        go.Scatter(
-            x=x_km,
-            y=y_km,
-            mode="lines",
-            name="Moon path",
-        )
-    )
-
-    if moon_index is not None:
-        fig.add_trace(
+    # Initial traces
+    fig = go.Figure(
+        data=[
+            earth_trace(),
             go.Scatter(
-                x=[x_km[moon_index]],
-                y=[y_km[moon_index]],
+                x=[x_km[0]],
+                y=[y_km[0]],
+                mode="lines",
+                name="Moon path",
+            ),
+            go.Scatter(
+                x=[x_km[0]],
+                y=[y_km[0]],
                 mode="markers",
                 name="Moon",
                 marker={"size": 10},
+            ),
+        ]
+    )
+
+    frames: list[go.Frame] = []
+    slider_steps: list[dict] = []
+
+    frame_indices = list(range(1, len(x_km), frame_stride))
+    if frame_indices[-1] != len(x_km) - 1:
+        frame_indices.append(len(x_km) - 1)
+
+    for i in frame_indices:
+        frame_name = f"frame_{i}"
+
+        frames.append(
+            go.Frame(
+                name=frame_name,
+                data=[
+                    earth_trace(),
+                    go.Scatter(
+                        x=x_km[: i + 1],
+                        y=y_km[: i + 1],
+                        mode="lines",
+                        name="Moon path",
+                    ),
+                    go.Scatter(
+                        x=[x_km[i]],
+                        y=[y_km[i]],
+                        mode="markers",
+                        name="Moon",
+                        marker={"size": 10},
+                    ),
+                ],
+                traces=[0, 1, 2],
             )
         )
 
+        slider_steps.append(
+            {
+                "args": [
+                    [frame_name],
+                    {
+                        "frame": {"duration": frame_duration_ms, "redraw": False},
+                        "mode": "immediate",
+                        "transition": {"duration": 0},
+                    },
+                ],
+                "label": f"{t_days[i]:.1f}",
+                "method": "animate",
+            }
+        )
+
+    fig.frames = frames
+
     fig.update_layout(
-        title=title,
+        title="Animated Orbit",
         xaxis_title="x (km)",
         yaxis_title="y (km)",
         showlegend=True,
         margin={"l": 20, "r": 20, "t": 50, "b": 20},
+        xaxis={"range": list(x_range)},
+        yaxis={
+            "range": list(y_range),
+            "scaleanchor": "x",
+            "scaleratio": 1,
+        },
+        updatemenus=[
+            {
+                "type": "buttons",
+                "showactive": False,
+                "x": 0.05,
+                "y": 1.12,
+                "direction": "left",
+                "buttons": [
+                    {
+                        "label": "Play",
+                        "method": "animate",
+                        "args": [
+                            None,
+                            {
+                                "frame": {"duration": frame_duration_ms, "redraw": False},
+                                "fromcurrent": True,
+                                "transition": {"duration": 0},
+                            },
+                        ],
+                    },
+                    {
+                        "label": "Pause",
+                        "method": "animate",
+                        "args": [
+                            [None],
+                            {
+                                "frame": {"duration": 0, "redraw": False},
+                                "mode": "immediate",
+                                "transition": {"duration": 0},
+                            },
+                        ],
+                    },
+                ],
+            }
+        ],
+        sliders=[
+            {
+                "active": 0,
+                "pad": {"t": 40},
+                "currentvalue": {"prefix": "Simulated time (days): "},
+                "steps": slider_steps,
+            }
+        ],
     )
-
-    fig.update_yaxes(scaleanchor="x", scaleratio=1)
-
-    if x_range is not None:
-        fig.update_xaxes(range=list(x_range))
-    if y_range is not None:
-        fig.update_yaxes(range=list(y_range))
 
     return fig
 
@@ -165,7 +238,7 @@ v0 = st.sidebar.slider(
     step=10,
 )
 
-t_days = st.sidebar.slider(
+t_days_total = st.sidebar.slider(
     "Simulation duration (days)",
     min_value=1,
     max_value=60,
@@ -181,118 +254,47 @@ n_steps = st.sidebar.slider(
 )
 
 frame_stride = st.sidebar.slider(
-    "Animation smoothness",
+    "Animation frame stride",
     min_value=5,
     max_value=100,
     value=20,
     step=5,
-    help="Smaller values give more animation frames but may run more slowly.",
+    help="Smaller values give more frames and smoother motion.",
 )
 
-frame_delay = st.sidebar.slider(
-    "Animation delay per frame (seconds)",
-    min_value=0.00,
-    max_value=0.20,
-    value=0.02,
-    step=0.01,
+frame_duration_ms = st.sidebar.slider(
+    "Frame duration (ms)",
+    min_value=10,
+    max_value=200,
+    value=30,
+    step=5,
 )
 
-# Convert units
-r0_m = r0_km * 1000.0
-t_max_s = t_days * 24.0 * 3600.0
-earth_radius_km = R_EARTH / 1000.0
+if st.button("Simulate"):
+    r0_m = r0_km * 1000.0
+    t_max_s = t_days_total * 24.0 * 3600.0
 
-# Preview initial configuration
-st.subheader("Initial setup")
-preview_xlim, preview_ylim = compute_plot_limits(
-    np.array([r0_km]),
-    np.array([0.0]),
-    earth_radius_km=earth_radius_km,
-    padding_fraction=0.2,
-)
-preview_fig = make_orbit_figure(
-    x_km=np.array([r0_km]),
-    y_km=np.array([0.0]),
-    moon_index=0,
-    title="Initial Position",
-    x_range=preview_xlim,
-    y_range=preview_ylim,
-)
-st.plotly_chart(preview_fig, use_container_width=True)
-
-simulate_button = st.button("Simulate")
-
-if simulate_button:
-    # Compute the entire trajectory first
-    t, x, y = simulate_orbit(
+    t_s, x_m, y_m = simulate_orbit(
         r0=r0_m,
         v0=float(v0),
         t_max=t_max_s,
         n_steps=n_steps,
     )
 
-    x_km = x / 1000.0
-    y_km = y / 1000.0
+    x_km = x_m / 1000.0
+    y_km = y_m / 1000.0
+    t_days = t_s / (24.0 * 3600.0)
     r_km = np.sqrt(x_km**2 + y_km**2)
 
-    # Fixed limits for the full animation
-    xlim, ylim = compute_plot_limits(
-        x_km,
-        y_km,
-        earth_radius_km=earth_radius_km,
-        padding_fraction=0.08,
-    )
-
-    animation_placeholder = st.empty()
-    status_placeholder = st.empty()
-
-    st.subheader("Animation")
-
-    for i in range(1, len(x_km), frame_stride):
-        animated_fig = make_orbit_figure(
-            x_km=x_km[: i + 1],
-            y_km=y_km[: i + 1],
-            moon_index=i,
-            title="Animated Orbit",
-            x_range=xlim,
-            y_range=ylim,
-        )
-
-        animation_placeholder.plotly_chart(
-            animated_fig,
-            use_container_width=True,
-            key=f"anim_frame_{i}",
-        )
-
-        elapsed_days = t[i] / (24.0 * 3600.0)
-        status_placeholder.markdown(f"**Simulated time:** {elapsed_days:.2f} days")
-
-        time.sleep(frame_delay)
-
-    final_anim_fig = make_orbit_figure(
+    fig = make_animation_figure(
         x_km=x_km,
         y_km=y_km,
-        moon_index=len(x_km) - 1,
-        title="Animated Orbit",
-        x_range=xlim,
-        y_range=ylim,
-    )
-    animation_placeholder.plotly_chart(
-        final_anim_fig,
-        use_container_width=True,
-        key="anim_final",
+        t_days=t_days,
+        frame_stride=frame_stride,
+        frame_duration_ms=frame_duration_ms,
     )
 
-    st.subheader("Full trajectory")
-    full_fig = make_orbit_figure(
-        x_km=x_km,
-        y_km=y_km,
-        moon_index=None,
-        title="Orbit Trajectory",
-        x_range=xlim,
-        y_range=ylim,
-    )
-    st.plotly_chart(full_fig, use_container_width=True)
+    st.plotly_chart(fig, use_container_width=True)
 
     st.subheader("Diagnostics")
     st.markdown(
